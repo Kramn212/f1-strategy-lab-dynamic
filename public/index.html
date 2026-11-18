@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<!--
+  F1 Strategy Lab - dashboard shell.
+  All logic is in app.js, all styling in style.css. This page only provides the empty containers
+  that app.js fills in. There is no build step: Vercel serves these files as they are.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>F1 Strategy Lab</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- Chart.js 4 from a CDN. To work fully offline, download it and point this src at the local copy. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="top">
+    <h1>F1 <span>Strategy Lab</span></h1>
+    <div id="selectors" class="selectors"></div>
+  </header>
+  <nav id="tabs" class="tabs"></nav>
+  <main id="main"><p class="muted">Loading&hellip;</p></main>
+  <div id="modal" class="modal" hidden></div>
+  <footer>
+    Unofficial project, not affiliated with Formula 1 or the FIA. Data: <a href="https://openf1.org">OpenF1</a>.
+    Every chart has an <b>Expand</b> button showing its data, method and the rows that were removed.
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>
