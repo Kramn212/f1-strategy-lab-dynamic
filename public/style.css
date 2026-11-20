@@ -45,6 +45,10 @@ footer { padding: 16px; text-align: center; color: var(--muted); font-size: 12px
 .chip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
 .empty { padding: 30px 10px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; }
 
+/* ---- refresh button + status line ---- */
+.refresh { display: flex; gap: 10px; align-items: center; margin-left: auto; font-size: 12px; max-width: 520px; }
+button[disabled] { opacity: .6; cursor: progress; }
+
 /* ---- tables ---- */
 .tablewrap { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: 8px; }
 .card .tablewrap { max-height: 340px; }

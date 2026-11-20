@@ -2,32 +2,31 @@
 demo.py - build SAMPLE dashboard data with no internet connection.
 
 Run:  python pipeline/demo.py
-Then: python -m http.server -d public 8000   ->  open http://localhost:8000
+Then: python pipeline/server.py        ->  open http://localhost:8000
 
-It runs the real ETL + analysis against fake_api.py (3 synthetic 2024 races, 6 drivers).
-The synthetic numbers only look like F1 data; the point is to preview every chart, the
-expand/Data/Method/Rejected tabs and the track map. Real data: python pipeline/etl.py
-then python pipeline/eda.py (this overwrites public/data/).
+It runs the real pipeline (extract -> transform -> load) against fake_api.py: 3 synthetic 2024
+races with 6 drivers. The numbers only LOOK like F1 data; the point is to preview every chart, the
+Expand tabs, the track map and the Refresh button. It writes into public/data/ and a temporary
+database, so your real data (if any) in data/f1.db is untouched - but public/data/ IS overwritten.
 """
 import shutil
 import tempfile
 from pathlib import Path
 
 import config
-import eda
-import etl
+import extract
 import fake_api
+import run
 
 
 def main():
     tmp = Path(tempfile.mkdtemp())
     config.CACHE_DIR, config.DB_PATH = tmp / "cache", tmp / "demo.db"
-    config.YEARS, config.LOCATION_YEARS = [2024], [2024]
+    config.YEARS, config.INCLUDE_CURRENT_YEAR, config.LOCATION_YEARS = [2024], False, [2024]
     if config.OUT_DIR.exists():
-        shutil.rmtree(config.OUT_DIR)                      # drop stale files from earlier runs
-    etl.get = fake_api.get
-    etl.main()
-    eda.main()
+        shutil.rmtree(config.OUT_DIR)
+    extract.get = fake_api.get                       # replace the real HTTP function
+    print(run.refresh())
     print(f"\nDemo data written to {config.OUT_DIR}")
 
 

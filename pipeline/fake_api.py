@@ -11,6 +11,7 @@ out-laps, a repair-length pit stop, an invalid pit record, all-zero location fra
 race with rain. The data is synthetic - it only resembles Formula 1 data.
 
 Set `EMPTY = {"pit": {9003}}` to make an endpoint return nothing for a session.
+Add a race with `RACES[9004] = (...)` to simulate a new race appearing on the API.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -41,7 +42,7 @@ def _build(key):
     """Generate every table for one session."""
     rng = np.random.default_rng(key)
     start = RACES[key][3]
-    d = {k: [] for k in ("laps", "stints", "pit", "position", "weather", "race_control", "location")}
+    d = {k: [] for k in ("laps", "stints", "pit", "position", "weather", "location")}
     starts = {}                                         # (driver index, lap) -> start offset in seconds
     for i, (num, _, _, team, _) in enumerate(DRIVERS):
         base = 90 + (i // 2) * 0.5 + (i % 2) * 0.2
@@ -103,17 +104,11 @@ def _build(key):
         d["weather"].append({"session_key": key, "date": iso(start + timedelta(minutes=m)),
                              "air_temperature": 24 + np.sin(m / 20), "track_temperature": 33 + 3 * np.sin(m / 25),
                              "humidity": 40, "rainfall": 1 if key == 9003 and m > 40 else 0})
-    sc0, sc1 = starts[(0, 12)], starts[(0, 15)]
-    d["race_control"] = [
-        {"session_key": key, "date": iso(start + timedelta(seconds=sc0)), "category": "SafetyCar",
-         "flag": None, "message": "SAFETY CAR DEPLOYED", "lap_number": 12},
-        {"session_key": key, "date": iso(start + timedelta(seconds=sc1)), "category": "SafetyCar",
-         "flag": None, "message": "SAFETY CAR IN THIS LAP", "lap_number": 15}]
     return d
 
 
-def get(endpoint, _post=None, **params):
-    """Same signature as etl.get; answers from the generated data."""
+def get(endpoint, fresh=False, _post=None, **params):
+    """Same signature as extract.get; answers from the generated data."""
     CALLS.append(endpoint)
     key = params.get("session_key")
     if endpoint == "meetings":
@@ -121,13 +116,14 @@ def get(endpoint, _post=None, **params):
     if endpoint == "sessions":
         return [{"session_key": k, "meeting_key": v[0], "session_name": params.get("session_name", "Race"),
                  "country_name": v[1], "circuit_short_name": v[2], "location": v[2],
-                 "date_start": iso(v[3]), "date_end": iso(v[3] + timedelta(hours=2))} for k, v in RACES.items()]
+                 "date_start": iso(v[3]), "date_end": iso(v[3] + timedelta(hours=2))} for k, v in RACES.items()
+                if v[3].year == params.get("year", v[3].year)]
     if key in EMPTY.get(endpoint, set()):
         return []
     if endpoint == "drivers":
         return [{"session_key": key, "driver_number": n, "name_acronym": c, "full_name": f, "team_name": t,
                  "team_colour": col} for n, c, f, t, col in DRIVERS]
-    table = {"race_control": "race_control"}.get(endpoint, endpoint)
+    table = endpoint
     if key not in _cache:
         _cache[key] = _build(key)
     rows = _cache[key][table]

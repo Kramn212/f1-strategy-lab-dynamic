@@ -69,15 +69,6 @@ class Position(BaseModel):
     position: int = Field(ge=1, le=25)
 
 
-class RaceControl(BaseModel):
-    session_key: int
-    date: str
-    category: Optional[str] = None
-    flag: Optional[str] = None
-    message: Optional[str] = None
-    lap_number: Optional[int] = None
-
-
 class Location(BaseModel):
     session_key: int
     driver_number: int

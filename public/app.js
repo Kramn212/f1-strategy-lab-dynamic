@@ -7,7 +7,8 @@
  *   3. Charts            one function per plot type; ALL of them draw from `chart.rows`
  *   4. Expand modal      Chart | Data | Method | Rejected tabs for every chart
  *   5. Track map         canvas drawing + time slider + running order
- *   6. Tabs              Overall, Season, Race, Driver, Track map, Strategy lab, Data quality
+ *   6. Tabs              Race, Driver, Track map, Strategy lab, Data quality
+ *   7. Refresh button    asks the Python server (server.py) to look for new races; shows progress
  *
  * KEY RULE: the chart and its data table are both built from the SAME `chart.rows` list that the
  * pipeline wrote, so they can never disagree. Nothing is recalculated here except the strategy
@@ -98,7 +99,7 @@ if (typeof document !== 'undefined') {   // ---- everything below needs a browse
 /* ============================================================== 2. STATE + LOADING */
 const DATA = 'data/';
 const S = {            // everything the page knows about "what is selected"
-  index: null, year: null, key: null, driver: null, tab: 'overall',
+  index: null, year: null, key: null, driver: null, tab: 'race',
   charts: [],          // live Chart.js instances (destroyed on every re-render)
   timers: [],          // setInterval ids of the track animation
   marker: null,        // lap shown as a vertical line on lap-based charts (set by the track slider)
@@ -107,14 +108,14 @@ const S = {            // everything the page knows about "what is selected"
 const cache = new Map();
 const drawQueue = [];   // chart drawings waiting until their canvas is attached to the page
 function flushDraws() { while (drawQueue.length) drawQueue.shift()(); }
-const TABS = [['overall', 'Overall'], ['season', 'Season'], ['race', 'Race'], ['driver', 'Driver'],
-              ['track', 'Track map'], ['strategy', 'Strategy lab'], ['quality', 'Data quality']];
+const TABS = [['race', 'Race'], ['driver', 'Driver'], ['track', 'Track map'],
+              ['strategy', 'Strategy lab'], ['quality', 'Data quality']];
 const $ = (sel, el = document) => el.querySelector(sel);
 
 /** Fetch + cache a JSON file from data/. */
 async function load(file) {
   if (!cache.has(file)) {
-    cache.set(file, fetch(DATA + file).then(r => {
+    cache.set(file, fetch(DATA + file, { cache: 'no-cache' }).then(r => {
       if (!r.ok) throw new Error(`${file}: HTTP ${r.status}`);
       return r.json();
     }));
@@ -146,7 +147,7 @@ function select(options, value, onchange) {
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   S.year = p.get('y') ? +p.get('y') : null; S.key = p.get('gp') ? +p.get('gp') : null;
-  S.driver = p.get('d') || null; S.tab = p.get('tab') || 'overall';
+  S.driver = p.get('d') || null; S.tab = p.get('tab') || 'race';
 }
 function writeHash() {
   const p = new URLSearchParams();
@@ -514,15 +515,6 @@ function raceMeta(race) {
 
 async function renderTab(main) {
   const tab = S.tab;
-  if (tab === 'overall' || tab === 'season') {
-    if (tab === 'season' && !S.year) return main.append(needRace('Pick a year first.'));
-    const p = await load(tab === 'overall' ? S.index.overall_file : `season_${S.year}.json`);
-    main.append(h('h2', {}, `Pooled analysis: ${p.label}`),
-      h('p', { class: 'muted' }, `${p.session_keys.length} race(s) pooled. Pick a Grand Prix above for single-race analysis.`),
-      qualityBadges(p.quality),
-      await renderCharts(p.charts, null, { quality: p.quality, session_keys: p.session_keys, drivers: null }, () => true));
-    return;
-  }
   if (tab === 'quality') return renderQuality(main);
   if (tab === 'strategy') return renderStrategy(main);
 
@@ -574,21 +566,14 @@ function renderQuality(main) {
 }
 
 async function renderStrategy(main) {
-  let curves, laps = 57, pit = 22, source;
   const race = await getRace();
-  const rd = race && race.charts.find(c => c.id === 'degradation' && c.status === 'ok');
-  if (rd) {
-    curves = makeCurves(rd.rows); source = `${race.year} ${race.name} (measured in this race)`;
-    laps = Math.max(...race.charts.find(c => c.id === 'race_result').rows.map(r => r.laps || 0)) || laps;
-    const pr = race.charts.find(c => c.id === 'pit_stops').rows.map(r => r.duration).sort((a, b) => a - b);
-    if (pr.length) pit = pr[Math.floor(pr.length / 2)];
-  } else {
-    const o = await load(S.index.overall_file), pd = o.charts.find(c => c.id === 'p_degradation');
-    if (!pd || pd.status !== 'ok') return main.append(needRace('Not enough degradation data to simulate.'));
-    curves = makeCurves(pd.rows); source = 'all seasons pooled (select a race to use that race instead)';
-    const pt = o.charts.find(c => c.id === 'p_pit_team').rows.map(r => r.median_pit).sort((a, b) => a - b);
-    if (pt.length) pit = pt[Math.floor(pt.length / 2)];
-  }
+  if (!race) return main.append(needRace('Pick a year and a Grand Prix in the bar above.'));
+  const rd = race.charts.find(c => c.id === 'degradation' && c.status === 'ok');
+  if (!rd) return main.append(needRace('This race has too little clean tyre data to simulate.'));
+  const curves = makeCurves(rd.rows), source = `${race.year} ${race.name} (measured in this race)`;
+  let laps = Math.max(...race.charts.find(c => c.id === 'race_result').rows.map(r => r.laps || 0)) || 57, pit = 22;
+  const pr = race.charts.find(c => c.id === 'pit_stops').rows.map(r => r.duration).sort((a, b) => a - b);
+  if (pr.length) pit = pr[Math.floor(pr.length / 2)];
   const lapsIn = h('input', { type: 'number', value: Math.round(laps), min: 20, max: 80, style: 'width:80px' });
   const pitIn = h('input', { type: 'number', value: pit.toFixed(1), step: 0.5, style: 'width:80px' });
   const out = h('div');
@@ -617,16 +602,15 @@ function renderBar() {
   sel.replaceChildren(
     select([['', 'Year…'], ...idx.years.map(y => [y, y])], S.year, v => {
       S.year = v ? +v : null; S.key = null; S.driver = null;
-      if (S.year && ['race', 'driver', 'track'].includes(S.tab)) S.key = sessionsOf(S.year)[0]?.session_key ?? null;
+      if (S.year && ['race', 'driver', 'track'].includes(S.tab)) S.key = sessionsOf(S.year).at(-1)?.session_key ?? null;
       render();
     }),
     select([['', 'Grand Prix…'], ...races.map(s => [s.session_key, s.name])], S.key, v => {
       S.key = v ? +v : null;
       if (S.key && !(sessionInfo().drivers.some(d => d.code === S.driver))) S.driver = null;   // driver not in this race
-      if (S.key && ['overall', 'season'].includes(S.tab)) S.tab = 'race';
       render();
     }),
-    select([['', 'Driver…'], ...drivers.map(d => [d.code, `${d.code} · ${d.name}`])], S.driver, v => { S.driver = v || null; if (S.driver && ['overall', 'season', 'race'].includes(S.tab)) S.tab = 'driver'; render(); }));
+    select([['', 'Driver…'], ...drivers.map(d => [d.code, `${d.code} · ${d.name}`])], S.driver, v => { S.driver = v || null; if (S.driver && ['race'].includes(S.tab)) S.tab = 'driver'; render(); }));
   $('#tabs').replaceChildren(...TABS.map(([id, label]) =>
     h('button', { class: S.tab === id ? 'on' : '', onclick: () => { S.tab = id; render(); } }, label)));
 }
@@ -634,7 +618,7 @@ function renderBar() {
 async function render() {
   S.charts.forEach(c => c.destroy()); S.charts = [];
   S.timers.forEach(clearInterval); S.timers = []; S.trackState = null; S.marker = null; drawQueue.length = 0;
-  if (S.tab === 'driver' && S.driver && !S.key && S.year) S.key = sessionsOf(S.year)[0]?.session_key ?? null;
+  if (S.tab === 'driver' && S.driver && !S.key && S.year) S.key = sessionsOf(S.year).at(-1)?.session_key ?? null;
   writeHash(); renderBar();
   const main = $('#main');
   main.replaceChildren(h('p', { class: 'muted' }, 'Loading…'));
@@ -650,22 +634,98 @@ async function render() {
   }
 }
 
-async function start() {
-  const main = $('#main');
+/* ================================================================ 7. REFRESH BUTTON */
+/* The Refresh button needs server.py (python pipeline/server.py). On a static host (plain Vercel)
+ * /api/status does not exist, so the button is hidden and the site stays read-only. */
+const R = { available: false, status: null, timer: null, note: '' };
+
+async function api(path, opts = {}) {
+  const r = await fetch('api/' + path, { cache: 'no-store', ...opts });
+  let body = null;
+  try { body = await r.json(); } catch (e) { /* not JSON (static host) */ }
+  return { ok: r.ok, code: r.status, body };
+}
+async function probeRefresh() {
   try {
-    S.index = await load('index.json');
-    if (S.index.schema_version !== 2) throw new Error('data files are from a different version - re-run python pipeline/eda.py');
-  } catch (e) {
-    main.replaceChildren(h('div', { class: 'empty' }, 'No data found (', e.message, '). Run ',
-      h('code', {}, 'python pipeline/demo.py'), ' for sample data, or ', h('code', {}, 'python pipeline/etl.py && python pipeline/eda.py'),
-      ' for real data, and serve this folder over HTTP (not file://).'));
-    return;
+    const r = await api('status');
+    R.available = r.ok && !!r.body && 'state' in r.body;
+    R.status = r.body;
+  } catch (e) { R.available = false; }
+  if (R.available && R.status.state === 'running') pollRefresh();
+  drawRefresh();
+}
+function drawRefresh() {
+  const box = $('#refresh');
+  if (!box) return;
+  if (!R.available) { box.replaceChildren(h('span', { class: 'muted', title: 'Run python pipeline/server.py to enable refreshing' }, 'read-only')); return; }
+  const st = R.status || {}, running = st.state === 'running', res = st.last_result;
+  let text = R.note;
+  if (running) text = `${st.message}${st.total ? ` (${st.done}/${st.total})` : ''}`;
+  else if (st.state === 'error') text = `Refresh failed: ${st.error}`;
+  else if (st.state === 'done' && res) {
+    text = res.new.length ? `Loaded ${res.new.length} new race(s): ${res.new.join(', ')}.` : 'No new races.';
+    if (res.remaining) text += ` ${res.remaining} more waiting: click Refresh again.`;
+    if (res.waiting.length) text += ` Not published yet: ${res.waiting.join(', ')}.`;
+    if (res.errors.length) text += ` Problems: ${res.errors.join('; ')}.`;
   }
+  const updated = S.index ? `Data updated ${new Date(S.index.generated).toLocaleString()}` : 'No data yet';
+  box.replaceChildren(
+    h('button', { class: 'primary', disabled: running ? 'disabled' : null, onclick: startRefresh }, running ? '⟳ Refreshing…' : '⟳ Refresh data'),
+    h('span', { class: 'muted' }, text || updated));
+}
+async function startRefresh() {
+  const headers = {};
+  if (R.status && R.status.requires_key) {
+    const key = sessionStorage.getItem('f1key') || prompt('Refresh key:');
+    if (!key) return;
+    headers['X-Refresh-Key'] = key; sessionStorage.setItem('f1key', key);
+  }
+  const r = await api('refresh', { method: 'POST', headers });
+  if (r.code === 401) sessionStorage.removeItem('f1key');
+  if (r.code === 202 || r.code === 409) { R.note = ''; R.status = { ...R.status, state: 'running', message: 'Starting…', done: 0, total: 0 }; pollRefresh(); }
+  else R.note = (r.body && r.body.error) || `Refresh failed (HTTP ${r.code})`;
+  drawRefresh();
+}
+function pollRefresh() {
+  clearInterval(R.timer);
+  R.timer = setInterval(async () => {
+    try { const r = await api('status'); if (r.ok) R.status = r.body; } catch (e) { return; }
+    drawRefresh();
+    if (R.status.state !== 'running') {
+      clearInterval(R.timer);
+      if (R.status.state === 'done') await reloadData();       // new files exist now: reload them
+    }
+  }, 1500);
+}
+async function reloadData() {
+  cache.clear();
+  try { await enter(); } catch (e) { /* keep the old view; the status line explains */ }
+  drawRefresh();
+}
+
+/* ============================================================== start-up */
+let listening = false;
+/** (Re)load index.json and draw the page. Throws when there is no usable data. */
+async function enter() {
+  S.index = await load('index.json');
+  if (S.index.schema_version !== 3) throw new Error('data files are from a different version - run the pipeline again');
   indexTeamColours();
   readHash();
-  if (!S.year && S.index.years.length) S.year = S.index.years[S.index.years.length - 1];
-  window.addEventListener('hashchange', () => { readHash(); render(); });
+  if (!S.year || !S.index.years.includes(S.year)) S.year = S.index.years[S.index.years.length - 1] || null;
+  if (S.year && !sessionsOf(S.year).some(s => s.session_key === S.key)) S.key = sessionsOf(S.year).at(-1)?.session_key ?? null;   // default: latest race
+  if (!listening) { window.addEventListener('hashchange', () => { readHash(); render(); }); listening = true; }
   render();
+  drawRefresh();
+}
+async function start() {
+  await probeRefresh();
+  try { await enter(); }
+  catch (e) {
+    $('#main').replaceChildren(h('div', { class: 'empty' }, `No data found (${e.message}). `,
+      R.available ? 'Click “Refresh data” above to download the latest races (a few at a time).'
+        : ['Run ', h('code', {}, 'python pipeline/demo.py'), ' for sample data or ', h('code', {}, 'python pipeline/run.py'),
+           ' for real data, then serve with ', h('code', {}, 'python pipeline/server.py'), '.']));
+  }
 }
 start();
 }   // end of browser-only section

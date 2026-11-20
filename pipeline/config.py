@@ -1,49 +1,47 @@
 """
-config.py - the ONE place for every setting and threshold in the pipeline.
+config.py - every setting and threshold in ONE place.
 
-Why this file exists
---------------------
-Cleaning rules (e.g. "drop laps slower than 1.07x the median") used to be
-hard-coded inside the analysis code. They now live here, and `methods.py`
-reads the very same values to write the "Method" text shown in the
-dashboard. Change a number here and the code AND the on-screen explanation
-change together - they can never disagree.
-
-Everything is read at call time (`config.X`), so tests can override values.
+The transform step (transform.py) and the "Method" text shown in the dashboard both read these
+numbers, so the code and its explanation can never disagree. Values are read at call time
+(`config.X`), which is also how the tests override them.
 """
+import os
 from pathlib import Path
 
-# ----------------------------------------------------------------- paths
-ROOT = Path(__file__).resolve().parent.parent        # project root
-CACHE_DIR = ROOT / "cache"                            # raw API responses (git-ignored)
-DB_PATH = ROOT / "data" / "f1.db"                     # SQLite database (git-ignored)
-OUT_DIR = ROOT / "public" / "data"                    # JSON the website loads (commit this!)
+ROOT = Path(__file__).resolve().parent.parent
+# Where state lives. Default = inside the project. On a host with a persistent disk, set the
+# environment variable F1_STATE_DIR to that disk's mount path so data survives restarts.
+STATE_DIR = Path(os.environ.get("F1_STATE_DIR", ROOT))
+CACHE_DIR = STATE_DIR / "cache"                       # raw API responses
+DB_PATH = STATE_DIR / "data" / "f1.db"                # SQLite database (validated tables)
+OUT_DIR = (STATE_DIR / "out") if "F1_STATE_DIR" in os.environ else ROOT / "public" / "data"  # JSON for the site
+PUBLIC_DIR = ROOT / "public"                          # the dashboard (HTML/JS/CSS)
 
-# ------------------------------------------------------------------- API
+# ---- API (extract) -------------------------------------------------------------
 BASE_URL = "https://api.openf1.org/v1"
-REQUEST_GAP_S = 2.2          # min seconds between API calls (~27 calls/min, under the rate limit)
-MAX_RETRIES = 6              # retries on HTTP 429 / network errors
+REQUEST_GAP_S = 2.2          # seconds between calls (~27/min, under OpenF1's rate limit)
+MAX_RETRIES = 6
 
-# ----------------------------------------------------------------- scope
-YEARS = [2023, 2024, 2025]           # seasons to load
-SESSION_TYPES = ["Race"]             # add "Sprint" / "Qualifying" later - schema already supports it
-LOCATION_YEARS = [2025]              # location (x,y) data is HUGE; only these years get a track map
-LOC_STEP_S = 2.0                     # keep one location sample per driver every N seconds
+# ---- scope ----------------------------------------------------------------------
+YEARS = [2023, 2024, 2025]   # seasons to load
+INCLUDE_CURRENT_YEAR = True  # a refresh also looks at the current calendar year (new races!)
+SESSION_TYPE = "Race"
+LOCATION_YEARS = [2025]      # track-map data is big (~20 calls/race); only these years get it
+LOC_STEP_S = 2.0             # keep one location sample per driver every N seconds
 
-# ------------------------------------------------------ cleaning thresholds
-FUEL_CORR_S_PER_LAP = 0.03   # assumed gain per lap as fuel burns off (ASSUMPTION, not measured)
-SLOW_LAP_FACTOR = 1.07       # lap is "slow" if adjusted time > factor * driver's median
-PIT_MAX_S = 40.0             # pit lane time at/above this = repair / red-flag stop, excluded
-DEG_MAX_AGE = 35             # tyre ages above this are not plotted in degradation curves
+# ---- refresh behaviour ------------------------------------------------------------
+PUBLISH_DELAY_S = 2 * 3600   # a race counts as "ready" this long after it ended
+MAX_PER_REFRESH = 4          # sessions loaded per click on Refresh (CLI has no limit); click again for more
+GIVE_UP_DAYS = 14            # a race that stays EMPTY this long after it ended is treated as 'no data published'
+REFRESH_COOLDOWN_S = 300     # minimum seconds between two refreshes from the website
+# optional: set the environment variable REFRESH_KEY to require a password for the Refresh button
 
-# --------------------------------------------------- minimum sample sizes
-MIN_N_DEG_RACE = 3           # laps needed per (compound, tyre age) in ONE race
-MIN_N_DEG_POOLED = 15        # ... when pooling a season / all seasons
-MIN_AGES_PER_COMPOUND = 4    # a degradation curve needs at least this many ages
-MIN_PIT_TEAM_POOLED = 5      # stops needed per team in the pooled pit chart
-MIN_TEMP_BAND_N = 100        # laps needed per 5-degree track-temperature band
-MIN_RAIN_N = 50              # laps needed per weather class (dry / rain)
-MIN_STOPS_N = 5              # driver-races needed per stop-count group
+# ---- cleaning thresholds (transform) ---------------------------------------------
+FUEL_CORR_S_PER_LAP = 0.03   # assumed time gained per lap as fuel burns off (an ASSUMPTION)
+SLOW_LAP_FACTOR = 1.07       # "slow" lap = adjusted time > factor x driver's median
+PIT_MAX_S = 40.0             # pit-lane time at/above this = repair or red-flag stop, excluded
+DEG_MAX_AGE = 35             # tyre ages above this are not plotted
+MIN_N_DEG = 3                # laps needed per (compound, tyre age) point
+MIN_AGES_PER_COMPOUND = 4    # a degradation curve needs this many ages
 
-# ---------------------------------------------------------------- output
-SCHEMA_VERSION = 2           # bump when the JSON layout changes; the website checks it
+SCHEMA_VERSION = 3           # bump when the JSON layout changes (the site checks it)
